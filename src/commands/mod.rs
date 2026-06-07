@@ -43,8 +43,8 @@ pub trait Command {
 	/// Execute the command with the given arguments and optional redirection
 	/// All builtin commands implement this method
 	fn execute(
-		&self,                        // Borrow self immutably (no mutable state needed)
-		args: &[String],              // Slice of command line arguments
+		&self,                             // Borrow self immutably (no mutable state needed)
+		args: &[String],                   // Slice of command line arguments
 		redirection: Option<&Redirection>, // Optional output redirection configuration
-	) -> Result<(), CommandError>;   // Return unit on success, CommandError on failure
+	) -> Result<(), CommandError>; // Return unit on success, CommandError on failure
 }

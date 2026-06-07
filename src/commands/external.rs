@@ -2,7 +2,8 @@
 use super::{Command, CommandError, utils::find_executable};
 // Import Redirection and RedirectionType from the crate root
 use crate::{Redirection, RedirectionType};
-// Import file open options, Unix-specific modules for file descriptors and process extensions, and process module
+// Import file open options, Unix-specific modules for file descriptors and process extensions, and
+// process module
 use std::{
 	fs::OpenOptions,
 	os::unix::{io::AsRawFd, process::CommandExt},
@@ -19,10 +20,11 @@ pub struct ExternalCommand {
 impl Command for ExternalCommand {
 	// The execute method is required by the Command trait
 	fn execute(
-		&self,                          // Borrow self immutably
-		args: &[String],                // Slice of command line arguments
+		&self,                             // Borrow self immutably
+		args: &[String],                   // Slice of command line arguments
 		redirection: Option<&Redirection>, // Optional output redirection configuration
-	) -> Result<(), CommandError> {   // Return unit on success, CommandError on failure
+	) -> Result<(), CommandError> {
+		// Return unit on success, CommandError on failure
 		// Try to find the executable in PATH
 		if let Some(executable_path) = find_executable(&self.command_name) {
 			// Handle output redirection if specified

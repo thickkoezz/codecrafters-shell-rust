@@ -13,10 +13,12 @@ pub struct Cd;
 impl Command for Cd {
 	// The execute method is required by the Command trait
 	fn execute(
-		&self,                          // Borrow self immutably since Cd has no state
-		args: &[String],                // Slice of command line arguments passed to 'cd'
-		_redirection: Option<&Redirection>, // Unused - cd doesn't produce output to redirect (underscore prefix suppresses warning)
-	) -> Result<(), CommandError> {   // Return unit on success, CommandError on failure
+		&self,           // Borrow self immutably since Cd has no state
+		args: &[String], // Slice of command line arguments passed to 'cd'
+		_redirection: Option<&Redirection>, /* Unused - cd doesn't produce output to redirect
+		                  * (underscore prefix suppresses warning) */
+	) -> Result<(), CommandError> {
+		// Return unit on success, CommandError on failure
 		// Pattern match on the first argument from the args slice
 		match args.first() {
 			// If there is at least one argument, process the path
@@ -70,7 +72,8 @@ impl Command for Cd {
 				}
 			},
 			// If no arguments were provided (args is empty), do nothing
-			// The 'cd' command with no arguments typically changes to HOME, but this implementation does nothing
+			// The 'cd' command with no arguments typically changes to HOME, but this implementation
+			// does nothing
 			None => {},
 		}
 		// Return Ok(()) to indicate successful execution

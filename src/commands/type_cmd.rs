@@ -12,13 +12,14 @@ pub struct Type;
 // Implement the Command trait for the Type struct
 impl Command for Type {
 	// The execute method is required by the Command trait
-	// It takes a reference to self, a slice of string arguments, and an optional redirection reference
-	// Returns Result indicating success (()) or failure (CommandError)
+	// It takes a reference to self, a slice of string arguments, and an optional redirection
+	// reference Returns Result indicating success (()) or failure (CommandError)
 	fn execute(
-		&self,                          // Borrow self immutably since Type has no state
-		args: &[String],                // Slice of command line arguments passed to 'type'
+		&self,                             // Borrow self immutably since Type has no state
+		args: &[String],                   // Slice of command line arguments passed to 'type'
 		redirection: Option<&Redirection>, // Optional output redirection configuration
-	) -> Result<(), CommandError> {   // Return unit on success, CommandError on failure
+	) -> Result<(), CommandError> {
+		// Return unit on success, CommandError on failure
 		// Define an array containing all shell builtin command names
 		// This hardcoded list is checked to determine if a command is a shell builtin
 		let command_list: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
@@ -33,7 +34,8 @@ impl Command for Type {
 				// Build the output message based on what type of command arg is
 				// Uses if-else chain to determine the appropriate message format
 				let output = if command_list.contains(&arg) {
-					// If arg is in the builtin list, format the message to indicate it's a shell builtin
+					// If arg is in the builtin list, format the message to indicate it's a shell
+					// builtin
 					format!("{} is a shell builtin", arg)
 				} else if let Some(path) = find_executable(arg) {
 					// If find_executable returns Some(path), the command exists in PATH
@@ -101,8 +103,9 @@ impl Command for Type {
 							},
 						}
 					} else {
-						// For stderr redirection (2>), output still goes to stdout in this implementation
-						// Print the output message to standard output with a newline
+						// For stderr redirection (2>), output still goes to stdout in this
+						// implementation Print the output message to standard output with a
+						// newline
 						println!("{}", output);
 					}
 				} else {
@@ -153,7 +156,8 @@ mod tests {
 		let type_cmd = Type;
 		// Execute the type command with "ls" as the argument (should be in PATH)
 		let result = type_cmd.execute(&["ls".to_string()], None);
-		// Assert that the result is either Ok or Err (both are acceptable since we can't guarantee PATH)
+		// Assert that the result is either Ok or Err (both are acceptable since we can't guarantee
+		// PATH)
 		assert!(result.is_ok() || result.is_err()); // Either way is fine
 	}
 

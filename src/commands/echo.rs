@@ -16,10 +16,11 @@ pub struct Echo;
 impl Command for Echo {
 	// The execute method is required by the Command trait
 	fn execute(
-		&self,                          // Borrow self immutably since Echo has no state
-		args: &[String],                // Slice of command line arguments passed to 'echo'
+		&self,                             // Borrow self immutably since Echo has no state
+		args: &[String],                   // Slice of command line arguments passed to 'echo'
 		redirection: Option<&Redirection>, // Optional output redirection configuration
-	) -> Result<(), CommandError> {   // Return unit on success, CommandError on failure
+	) -> Result<(), CommandError> {
+		// Return unit on success, CommandError on failure
 		// Flag to track if the -n option was provided (suppress trailing newline)
 		let mut omit_newline = false;
 		// Vector to store filtered arguments (excluding the -n flag if present)

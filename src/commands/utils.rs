@@ -16,13 +16,14 @@ pub fn find_executable(command: &str) -> Option<String> {
 			// Check if the file at the full path exists
 			if full_path.exists() {
 				// Check if file has execute permissions
-				// Get metadata, then check permissions mode & 0o111 (execute bits for user/group/other)
-				// unwrap_or(false) defaults to false if metadata check fails
+				// Get metadata, then check permissions mode & 0o111 (execute bits for
+				// user/group/other) unwrap_or(false) defaults to false if metadata check fails
 				if fs::metadata(&full_path)
 					.map(|meta| meta.permissions().mode() & 0o111 != 0) // Check if any execute bit is set
 					.unwrap_or(false)
 				{
-					// Convert path to string, handling non-UTF8 characters gracefully with to_string_lossy
+					// Convert path to string, handling non-UTF8 characters gracefully with
+					// to_string_lossy
 					return Some(full_path.to_string_lossy().to_string());
 				}
 			}

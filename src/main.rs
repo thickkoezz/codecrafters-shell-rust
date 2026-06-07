@@ -5,29 +5,40 @@ mod user_input;
 
 // Import the rustyline library for readline-style input with history and completion
 use rustyline::{
-	Context, Editor, Helper,                      // Core rustyline types
-	completion::{Completer, Pair},                // Tab completion types
-	error::ReadlineError,                         // Error type for readline operations
-	highlight::{CmdKind, Highlighter},           // Syntax highlighting types
-	hint::Hinter,                                  // Hint types (inline suggestions)
-	history::DefaultHistory,                      // Default history implementation
+	Context,
+	Editor,
+	Helper,                        // Core rustyline types
+	completion::{Completer, Pair}, // Tab completion types
+	error::ReadlineError,          /* Error type for readline
+	                                * operations */
+	highlight::{CmdKind, Highlighter}, // Syntax highlighting types
+	hint::Hinter,                      // Hint types (inline suggestions)
+	history::DefaultHistory,           // Default history implementation
 	validate::{ValidationContext, ValidationResult, Validator}, // Input validation types
 };
 // Import borrowed Cow, environment functions, filesystem, and path handling
-use std::{borrow::Cow, env, fs, path::Path};
+use std::{borrow::Cow, cell::RefCell, env, fs, io::Write, path::Path, rc::Rc};
 
 // Define the BuiltinCompleter struct which provides tab completion for shell commands
 struct BuiltinCompleter {
 	// List of builtin command names for completion
 	builtin_commands: Vec<&'static str>,
+	// Track the last partial input to detect repeated tab presses
+	last_partial: Rc<RefCell<String>>,
+	// Track tab press count for the current partial
+	tab_count: Rc<RefCell<usize>>,
 }
 
 // Implement methods for BuiltinCompleter
 impl BuiltinCompleter {
 	// Constructor method to create a new BuiltinCompleter instance
 	fn new() -> Self {
-		// Initialize with the list of builtin commands
-		Self { builtin_commands: vec!["echo", "exit", "type", "pwd", "cd"] }
+		// Initialize with the list of builtin commands and state tracking
+		Self {
+			builtin_commands: vec!["echo", "exit", "type", "pwd", "cd"],
+			last_partial: Rc::new(RefCell::new(String::new())),
+			tab_count: Rc::new(RefCell::new(0)),
+		}
 	}
 
 	// Method to get executables from PATH that start with the given partial string
@@ -37,7 +48,7 @@ impl BuiltinCompleter {
 
 		// Get PATH environment variable
 		let path_env = match env::var("PATH") {
-			Ok(p) => p,              // If PATH is set, use it
+			Ok(p) => p,                   // If PATH is set, use it
 			Err(_) => return executables, // If PATH is not set, return empty list
 		};
 
@@ -154,9 +165,9 @@ impl Completer for BuiltinCompleter {
 	// Complete the input at the given position
 	fn complete(
 		&self,
-		line: &str,                 // The full input line
-		pos: usize,                 // The cursor position in the line
-		_ctx: &Context<'_>,        // Context for completion (unused)
+		line: &str,         // The full input line
+		pos: usize,         // The cursor position in the line
+		_ctx: &Context<'_>, // Context for completion (unused)
 	) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
 		// Find the start of the word being completed
 		// Get the portion of the line up to the cursor position
@@ -175,7 +186,8 @@ impl Completer for BuiltinCompleter {
 		for cmd in &self.builtin_commands {
 			// Check if the builtin command starts with the partial input
 			if cmd.starts_with(partial) {
-				// Try to insert the command name into the seen set (returns false if already present)
+				// Try to insert the command name into the seen set (returns false if already
+				// present)
 				if seen_names.insert(cmd.to_string()) {
 					// Display version with a space after (so user can continue typing)
 					let display = format!("{} ", cmd);
@@ -190,7 +202,8 @@ impl Completer for BuiltinCompleter {
 		// Find matching executables in PATH
 		let path_executables = self.get_path_executables(partial);
 		for exe_name in &path_executables {
-			// Try to insert the executable name into the seen set (returns false if already present)
+			// Try to insert the executable name into the seen set (returns false if already
+			// present)
 			if seen_names.insert(exe_name.clone()) {
 				// Display version with a space after (so user can continue typing)
 				let display = format!("{} ", exe_name);
@@ -204,8 +217,66 @@ impl Completer for BuiltinCompleter {
 		// Sort matches alphabetically for consistent display
 		matches.sort_by(|a, b| a.display.cmp(&b.display));
 
-		// Return the word start position and the list of matches
-		Ok((word_start, matches))
+		// Track tab press state for traditional shell completion behavior
+		let mut last_partial = self.last_partial.borrow_mut();
+		let mut tab_count = self.tab_count.borrow_mut();
+
+		// Check if this is the same partial as last time
+		if *last_partial == partial.to_string() {
+			// Same partial, increment tab count
+			*tab_count += 1;
+		} else {
+			// Different partial, reset tab count
+			*last_partial = partial.to_string();
+			*tab_count = 1;
+		}
+
+		// Traditional shell completion behavior:
+		// - If there are multiple matches:
+		//   - First TAB: ring the bell (return empty matches)
+		//   - Second TAB: print all matches
+		// - If there's exactly one match: complete immediately
+		if matches.len() > 1 {
+			// Multiple matches - use tab count to determine behavior
+			if *tab_count == 1 {
+				// First tab press - ring the bell by returning empty matches
+				Ok((word_start, Vec::new()))
+			} else {
+				// Second (or later) tab press - display all matches
+				// Print all matches on a new line, separated by two spaces
+				let match_names: Vec<&str> = matches.iter().map(|p| p.display.trim()).collect();
+
+				// Store the current line and position for restoration
+				let current_line = line;
+				let current_pos = pos;
+
+				// Ring the bell and print matches using terminal control codes
+				print!("\x07"); // Ring the bell
+				print!("\r\n{}\r\n", match_names.join("  ")); // Print matches on new line
+
+				// Manually restore the prompt and input using ANSI escape codes
+				print!("$ {}", current_line); // Print prompt and original input
+
+				// Move cursor back to original position
+				let chars_from_end = current_line.len().saturating_sub(current_pos);
+				if chars_from_end > 0 {
+					// Use ANSI escape code to move cursor left
+					print!("\x1b[{}D", chars_from_end);
+				}
+				// Flush stdout to ensure output is displayed immediately
+				std::io::stdout().flush().ok();
+
+				// Reset tab count for next completion
+				*tab_count = 0;
+				// Return empty matches to prevent auto-completion
+				Ok((word_start, Vec::new()))
+			}
+		} else {
+			// Zero or one matches - return as-is for normal completion
+			// Reset tab count for next completion
+			*tab_count = 0;
+			Ok((word_start, matches))
+		}
 	}
 }
 

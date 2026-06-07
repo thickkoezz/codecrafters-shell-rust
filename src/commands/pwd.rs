@@ -13,10 +13,12 @@ pub struct Pwd;
 impl Command for Pwd {
 	// The execute method is required by the Command trait
 	fn execute(
-		&self,                          // Borrow self immutably since Pwd has no state
-		_args: &[String],               // Unused - pwd doesn't use arguments (underscore prefix suppresses warning)
+		&self, // Borrow self immutably since Pwd has no state
+		_args: &[String], /* Unused - pwd doesn't use arguments (underscore
+		        * prefix suppresses warning) */
 		redirection: Option<&Redirection>, // Optional output redirection configuration
-	) -> Result<(), CommandError> {   // Return unit on success, CommandError on failure
+	) -> Result<(), CommandError> {
+		// Return unit on success, CommandError on failure
 		// Get the current working directory from the environment
 		match env::current_dir() {
 			// If successfully got the current directory
@@ -83,8 +85,8 @@ impl Command for Pwd {
 							},
 						}
 					} else {
-						// For stderr redirection (2>), output still goes to stdout in this implementation
-						// Print the path to standard output with a newline
+						// For stderr redirection (2>), output still goes to stdout in this
+						// implementation Print the path to standard output with a newline
 						println!("{}", path_str);
 					}
 				} else {
