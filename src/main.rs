@@ -1,8 +1,611 @@
-#[allow(unused_imports)]
-use std::io::{self, Write};
+// Declare the commands module (contains all builtin command implementations)
+mod commands;
+// Declare the user_input module (contains UserInput parsing and execution logic)
+mod user_input;
 
+// Import the rustyline library for readline-style input with history and completion
+use rustyline::{
+	Context, Editor, Helper,                      // Core rustyline types
+	completion::{Completer, Pair},                // Tab completion types
+	error::ReadlineError,                         // Error type for readline operations
+	highlight::{CmdKind, Highlighter},           // Syntax highlighting types
+	hint::Hinter,                                  // Hint types (inline suggestions)
+	history::DefaultHistory,                      // Default history implementation
+	validate::{ValidationContext, ValidationResult, Validator}, // Input validation types
+};
+// Import borrowed Cow, environment functions, filesystem, and path handling
+use std::{borrow::Cow, env, fs, path::Path};
+
+// Define the BuiltinCompleter struct which provides tab completion for shell commands
+struct BuiltinCompleter {
+	// List of builtin command names for completion
+	builtin_commands: Vec<&'static str>,
+}
+
+// Implement methods for BuiltinCompleter
+impl BuiltinCompleter {
+	// Constructor method to create a new BuiltinCompleter instance
+	fn new() -> Self {
+		// Initialize with the list of builtin commands
+		Self { builtin_commands: vec!["echo", "exit", "type", "pwd", "cd"] }
+	}
+
+	// Method to get executables from PATH that start with the given partial string
+	fn get_path_executables(&self, partial: &str) -> Vec<String> {
+		// Vector to store matching executable names
+		let mut executables: Vec<String> = Vec::new();
+
+		// Get PATH environment variable
+		let path_env = match env::var("PATH") {
+			Ok(p) => p,              // If PATH is set, use it
+			Err(_) => return executables, // If PATH is not set, return empty list
+		};
+
+		// Split PATH by ':' (Unix-style path separator)
+		for dir in path_env.split(':') {
+			// Skip empty directory entries
+			if dir.is_empty() {
+				continue;
+			}
+
+			// Create a Path from the directory string
+			let path = Path::new(dir);
+
+			// Skip directories that don't exist (graceful handling)
+			if !path.exists() || !path.is_dir() {
+				continue;
+			}
+
+			// Read directory entries
+			if let Ok(entries) = fs::read_dir(path) {
+				// Iterate through each entry in the directory
+				for entry in entries.flatten() {
+					// Get the full path of the entry
+					let file_path = entry.path();
+
+					// Check if it's a file (not a directory)
+					if file_path.is_file() {
+						// Check if file is executable by testing if we can access it
+						// On Unix, we check the executable bit
+						#[cfg(unix)]
+						{
+							// Import Unix-specific permissions extension
+							use std::os::unix::fs::PermissionsExt;
+							// Get the file metadata
+							if let Ok(metadata) = fs::metadata(&file_path) {
+								// Get the file permissions
+								let permissions = metadata.permissions();
+								// Get the mode (permission bits)
+								let mode = permissions.mode();
+								// Check if any execute bit is set (user, group, or other)
+								// 0o111 is the mask for execute bits (binary: 001001001)
+								if mode & 0o111 != 0 {
+									// Extract the file name from the path
+									if let Some(name) = file_path.file_name() {
+										// Convert the file name to a string slice
+										if let Some(name_str) = name.to_str() {
+											// Only add if it starts with partial and isn't already
+											// in the list (avoid duplicates)
+											if name_str.starts_with(partial) &&
+												!executables.contains(&name_str.to_string())
+											{
+												// Add the executable name to the list
+												executables.push(name_str.to_string());
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Sort for consistent ordering (alphabetically)
+		executables.sort();
+
+		// Return the sorted list of executables
+		executables
+	}
+}
+
+// Implement the Helper trait for BuiltinCompleter (empty implementation required by rustyline)
+impl Helper for BuiltinCompleter {}
+
+// Implement the Hinter trait for BuiltinCompleter (provides inline suggestions)
+impl Hinter for BuiltinCompleter {
+	// The type of hint we provide (String)
+	type Hint = String;
+}
+
+// Implement the Highlighter trait for BuiltinCompleter (syntax highlighting)
+impl Highlighter for BuiltinCompleter {
+	// Highlight a line of input (returns the line unchanged, no highlighting)
+	fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+		// Return the line as-is (no syntax highlighting)
+		Cow::Borrowed(line)
+	}
+
+	// Highlight a single character (returns false, no highlighting)
+	fn highlight_char(&self, _line: &str, _pos: usize, _cmd: CmdKind) -> bool {
+		// Return false to indicate no character highlighting
+		false
+	}
+}
+
+// Implement the Validator trait for BuiltinCompleter (input validation)
+impl Validator for BuiltinCompleter {
+	// Validate the input (always returns Valid with None modifier)
+	fn validate(
+		&self,
+		_ctx: &mut ValidationContext<'_>, // Context for validation (unused)
+	) -> Result<ValidationResult, ReadlineError> {
+		// Always consider input valid with no modifications
+		Ok(ValidationResult::Valid(None))
+	}
+}
+
+// Implement the Completer trait for BuiltinCompleter (tab completion)
+impl Completer for BuiltinCompleter {
+	// The type of completion candidate we provide (Pair with display and replacement)
+	type Candidate = Pair;
+
+	// Complete the input at the given position
+	fn complete(
+		&self,
+		line: &str,                 // The full input line
+		pos: usize,                 // The cursor position in the line
+		_ctx: &Context<'_>,        // Context for completion (unused)
+	) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+		// Find the start of the word being completed
+		// Get the portion of the line up to the cursor position
+		let line_start = &line[..pos];
+		// Find the last space before the cursor (to get word start)
+		let word_start = line_start.rfind(' ').map_or(0, |i| i + 1);
+		// Get the partial word being completed
+		let partial = &line_start[word_start..];
+
+		// Vector to store all completion matches
+		let mut matches: Vec<Pair> = Vec::new();
+		// HashSet to track seen names and avoid duplicates
+		let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+		// Find matching builtin commands
+		for cmd in &self.builtin_commands {
+			// Check if the builtin command starts with the partial input
+			if cmd.starts_with(partial) {
+				// Try to insert the command name into the seen set (returns false if already present)
+				if seen_names.insert(cmd.to_string()) {
+					// Display version with a space after (so user can continue typing)
+					let display = format!("{} ", cmd);
+					// Replacement string (what gets inserted)
+					let replacement = format!("{} ", cmd);
+					// Add the completion candidate
+					matches.push(Pair { display, replacement });
+				}
+			}
+		}
+
+		// Find matching executables in PATH
+		let path_executables = self.get_path_executables(partial);
+		for exe_name in &path_executables {
+			// Try to insert the executable name into the seen set (returns false if already present)
+			if seen_names.insert(exe_name.clone()) {
+				// Display version with a space after (so user can continue typing)
+				let display = format!("{} ", exe_name);
+				// Replacement string (what gets inserted)
+				let replacement = format!("{} ", exe_name);
+				// Add the completion candidate
+				matches.push(Pair { display, replacement });
+			}
+		}
+
+		// Sort matches alphabetically for consistent display
+		matches.sort_by(|a, b| a.display.cmp(&b.display));
+
+		// Return the word start position and the list of matches
+		Ok((word_start, matches))
+	}
+}
+
+// Derive Debug and Clone for RedirectionType (useful for debugging and copying)
+#[derive(Debug, Clone, PartialEq)]
+// Enum representing the different types of output redirection
+pub enum RedirectionType {
+	// Redirect stdout with truncation (overwrite): >
+	Stdout,
+	// Redirect stderr with truncation (overwrite): 2>
+	Stderr,
+	// Redirect stdout with append: >>
+	StdoutAppend,
+	// Redirect stderr with append: 2>>
+	StderrAppend,
+}
+
+// Derive Debug and Clone for Redirection (useful for debugging and copying)
+#[derive(Debug, Clone)]
+// Struct representing an output redirection configuration
+pub struct Redirection {
+	// The file path to redirect output to
+	pub file: String,
+	// The type of redirection (stdout/stderr, append/truncate)
+	pub redirection_type: RedirectionType,
+}
+
+// Function to tokenize input string into a vector of strings
+// Handles quotes (single and double), escapes, and redirection operators
+fn tokenize(input: &str) -> Vec<String> {
+	// Vector to store the resulting tokens
+	let mut tokens = Vec::new();
+	// Peekable iterator over input characters (allows looking ahead)
+	let mut chars = input.chars().peekable();
+	// String buffer for the current token being built
+	let mut current_token = String::new();
+
+	// Process each character in the input
+	while let Some(&c) = chars.peek() {
+		// Match on the current character
+		match c {
+			'\'' => {
+				// Start of single quoted string
+				chars.next(); // consume opening quote
+				// String buffer for quoted content
+				let mut quoted_content = String::new();
+
+				// Process characters until closing quote
+				while let Some(&c) = chars.peek() {
+					match c {
+						'\'' => {
+							// Found closing quote
+							chars.next(); // consume closing quote
+							// Append quoted content to current token (concatenation)
+							current_token.push_str(&quoted_content);
+							// Break out of the inner loop
+							break;
+						},
+						_ => {
+							// Regular character inside quotes
+							// Consume and add to quoted content
+							quoted_content.push(chars.next().unwrap());
+						},
+					}
+				}
+			},
+			'"' => {
+				// Start of double quoted string
+				chars.next(); // consume opening quote
+				// String buffer for quoted content
+				let mut quoted_content = String::new();
+
+				// Process characters until closing quote
+				while let Some(&c) = chars.peek() {
+					match c {
+						'"' => {
+							// Found closing quote
+							chars.next(); // consume closing quote
+							// Append quoted content to current token (concatenation)
+							current_token.push_str(&quoted_content);
+							// Break out of the inner loop
+							break;
+						},
+						'\\' => {
+							// Backslash escape sequence
+							chars.next(); // consume the backslash
+							// Check if there's a next character
+							if let Some(&next_c) = chars.peek() {
+								match next_c {
+									'"' | '\\' => {
+										// Escaped quote or backslash - add the literal character
+										quoted_content.push(chars.next().unwrap());
+									},
+									_ => {
+										// For all other characters, backslash is treated literally
+										// So we add both the backslash and the next character
+										quoted_content.push('\\');
+										quoted_content.push(chars.next().unwrap());
+									},
+								}
+							} else {
+								// Backslash at end of string - treat literally
+								quoted_content.push('\\');
+							}
+						},
+						_ => {
+							// Regular character inside quotes
+							// Consume and add to quoted content
+							quoted_content.push(chars.next().unwrap());
+						},
+					}
+				}
+			},
+			' ' | '\t' => {
+				// Whitespace outside quotes - delimiter
+				chars.next(); // consume the whitespace character
+				// If there's a current token, add it to the tokens list
+				if !current_token.is_empty() {
+					tokens.push(current_token.clone());
+					// Clear the current token buffer
+					current_token.clear();
+				}
+			},
+			'>' => {
+				// Redirection operator - treat as delimiter
+				// If there's a current token, add it to the tokens list
+				if !current_token.is_empty() {
+					tokens.push(current_token.clone());
+					// Clear the current token buffer
+					current_token.clear();
+				}
+				chars.next(); // consume the first '>'
+				// Check if this is >> (append mode)
+				if let Some(&'>') = chars.peek() {
+					chars.next(); // consume the second '>'
+					// Add ">>" as a token
+					tokens.push(">>".to_string());
+				} else {
+					// Single ">" redirection
+					tokens.push(">".to_string());
+				}
+			},
+			'2' => {
+				// Check if this is the start of "2>" or "2>>" (stderr redirection)
+				chars.next(); // consume the '2'
+				// Check if the next character is '>'
+				if let Some(&'>') = chars.peek() {
+					chars.next(); // consume the first '>'
+					// Check if this is 2>> (append mode)
+					if let Some(&'>') = chars.peek() {
+						chars.next(); // consume the second '>'
+						// Add "2>>" as a token
+						tokens.push("2>>".to_string());
+					} else {
+						// Single "2>" redirection
+						tokens.push("2>".to_string());
+					}
+				} else {
+					// Just a regular '2' character, add to current token
+					current_token.push('2');
+				}
+			},
+			'\\' => {
+				// Backslash escapes the next character (outside quotes)
+				chars.next(); // consume the backslash
+				// Check if there's a next character to escape
+				if let Some(&_next_char) = chars.peek() {
+					// Add the next character literally (without the backslash)
+					current_token.push(chars.next().unwrap());
+				}
+				// If there's no next character, the backslash is just ignored
+			},
+			_ => {
+				// Regular character, add to current token
+				current_token.push(chars.next().unwrap());
+			},
+		}
+	}
+
+	// Don't forget the last token (if not empty)
+	if !current_token.is_empty() {
+		tokens.push(current_token);
+	}
+
+	// Return the vector of tokens
+	tokens
+}
+
+// Main function - entry point of the shell program
 fn main() {
-    // TODO: Uncomment the code below to pass the first stage
-    // print!("$ ");
-    // io::stdout().flush().unwrap();
+	// Create a new rustyline Editor with BuiltinCompleter and DefaultHistory
+	let mut rl =
+		Editor::<BuiltinCompleter, DefaultHistory>::new().expect("Failed to create editor");
+	// Set the helper (our completer) for the editor
+	rl.set_helper(Some(BuiltinCompleter::new()));
+
+	// Main REPL (Read-Eval-Print Loop)
+	loop {
+		// Read the line of input from the user with tab completion support
+		let input = match rl.readline("$ ") {
+			// If the line was read successfully
+			Ok(line) => line,
+			// If Ctrl+D (EOF) was pressed
+			Err(rustyline::error::ReadlineError::Eof) => {
+				// Exit the loop (terminate the shell)
+				break;
+			},
+			// If Ctrl+C was pressed
+			Err(rustyline::error::ReadlineError::Interrupted) => {
+				// Continue to the next iteration (ignore the interrupt)
+				continue;
+			},
+			// For any other error
+			Err(error) => {
+				// Print the error to stderr
+				eprintln!("Error reading input: {}", error);
+				// Exit the loop (terminate the shell)
+				break;
+			},
+		};
+
+		// Add the input to history (for up-arrow recall)
+		rl.add_history_entry(input.as_str()).ok();
+
+		// Clean up trailing newline characters (\n or \r\n)
+		let trimmed = input.trim();
+
+		// Skip empty inputs (if user just hits Enter)
+		if trimmed.is_empty() {
+			continue;
+		}
+
+		// Parse the input into tokens with quote support
+		let tokens = tokenize(trimmed);
+
+		// Check for redirection operator
+		let mut redirection: Option<Redirection> = None;
+		// Index where command tokens end (before redirection)
+		let mut command_end = tokens.len();
+
+		// Handle "1>" and "1>>" syntax (same as ">" and ">>")
+		let mut tokens_to_process = tokens.clone();
+		let mut i = 0;
+		// Iterate through tokens looking for "1>" or "1>>" patterns
+		while i < tokens_to_process.len() {
+			// Check if current token is "1" and next token is ">" or ">>"
+			if tokens_to_process[i] == "1" &&
+				i + 1 < tokens_to_process.len() &&
+				(tokens_to_process[i + 1] == ">" || tokens_to_process[i + 1] == ">>")
+			{
+				// Remove "1" since "1>" is same as ">" and "1>>" is same as ">>"
+				tokens_to_process.remove(i);
+				// Break out of the loop (found and handled)
+				break;
+			}
+			// Move to the next token
+			i += 1;
+		}
+
+		// Find the redirection operators: '>', '>>', '2>', '2>>'
+		for (i, token) in tokens_to_process.iter().enumerate() {
+			// Check for stdout redirect with truncate
+			if token == ">" {
+				// Check if there's a filename after '>'
+				if i + 1 < tokens_to_process.len() {
+					// Create the redirection configuration
+					redirection = Some(Redirection {
+						file: tokens_to_process[i + 1].clone(),
+						redirection_type: RedirectionType::Stdout,
+					});
+					// Set command_end to current index (command tokens end before redirection)
+					command_end = i;
+					// Break out of the loop (found the redirection)
+					break;
+				}
+			} else if token == ">>" {
+				// Check if there's a filename after '>>'
+				if i + 1 < tokens_to_process.len() {
+					// Create the redirection configuration
+					redirection = Some(Redirection {
+						file: tokens_to_process[i + 1].clone(),
+						redirection_type: RedirectionType::StdoutAppend,
+					});
+					// Set command_end to current index (command tokens end before redirection)
+					command_end = i;
+					// Break out of the loop (found the redirection)
+					break;
+				}
+			} else if token == "2>" {
+				// Check if there's a filename after '2>'
+				if i + 1 < tokens_to_process.len() {
+					// Create the redirection configuration
+					redirection = Some(Redirection {
+						file: tokens_to_process[i + 1].clone(),
+						redirection_type: RedirectionType::Stderr,
+					});
+					// Set command_end to current index (command tokens end before redirection)
+					command_end = i;
+					// Break out of the loop (found the redirection)
+					break;
+				}
+			} else if token == "2>>" {
+				// Check if there's a filename after '2>>'
+				if i + 1 < tokens_to_process.len() {
+					// Create the redirection configuration
+					redirection = Some(Redirection {
+						file: tokens_to_process[i + 1].clone(),
+						redirection_type: RedirectionType::StderrAppend,
+					});
+					// Set command_end to current index (command tokens end before redirection)
+					command_end = i;
+					// Break out of the loop (found the redirection)
+					break;
+				}
+			}
+		}
+
+		// Extract command and args (excluding redirection part)
+		let command_tokens = &tokens_to_process[..command_end];
+		// Skip if there are no command tokens (only redirection was provided)
+		if command_tokens.is_empty() {
+			continue;
+		}
+
+		// Create a UserInput from the parsed tokens
+		let user_input = user_input::UserInput::new(
+			// First token is the command name
+			command_tokens.first().unwrap().clone(),
+			// Remaining tokens are the arguments
+			command_tokens.iter().skip(1).cloned().collect(),
+			// Redirection configuration (if any)
+			redirection,
+		);
+
+		// Evaluate the command
+		match user_input.command.as_str() {
+			// If command is "exit", break the loop (terminate the shell)
+			"exit" => break,
+			// For all other commands, evaluate and execute
+			_ => user_input.evaluate_command(),
+		}
+	}
+}
+
+// Conditional compilation attribute - only compile the following module when running tests
+#[cfg(test)]
+mod tests {
+	// Import items from parent module and std library
+	use super::*;
+	use std::{env, fs, path::Path};
+
+	// Test function to verify get_path_executables works correctly
+	#[test]
+	fn test_get_path_executables() {
+		// Create a completer instance
+		let completer = BuiltinCompleter::new();
+
+		// Save original PATH (so we can restore it later)
+		let original_path = env::var("PATH").unwrap_or_default();
+
+		// Create a temporary directory with a test executable
+		let temp_dir = "/tmp/test_shell_completion";
+		fs::create_dir_all(temp_dir).unwrap();
+
+		// Create a test executable file
+		let test_exe = Path::new(temp_dir).join("test_executable");
+		fs::write(&test_exe, "#!/bin/sh\necho test").unwrap();
+
+		// Make the file executable (Unix-specific)
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			// Get current permissions
+			let mut perms = fs::metadata(&test_exe).unwrap().permissions();
+			// Set executable bit (0o755 = rwxr-xr-x)
+			perms.set_mode(0o755);
+			// Apply the new permissions
+			fs::set_permissions(&test_exe, perms).unwrap();
+		}
+
+		// Set PATH to only include our temp directory (unsafe because it modifies process state)
+		unsafe {
+			env::set_var("PATH", temp_dir);
+		};
+
+		// Test that we can find the executable
+		let results = completer.get_path_executables("test");
+		// Assert that "test_executable" is in the results
+		assert!(results.contains(&"test_executable".to_string()));
+
+		// Test that non-matching partial returns empty
+		let results = completer.get_path_executables("nomatch");
+		// Assert that no executables match "nomatch"
+		assert!(results.is_empty());
+
+		// Cleanup - remove the temp directory
+		fs::remove_dir_all(temp_dir).unwrap();
+		// Restore original PATH (unsafe because it modifies process state)
+		unsafe {
+			env::set_var("PATH", original_path);
+		};
+	}
 }
