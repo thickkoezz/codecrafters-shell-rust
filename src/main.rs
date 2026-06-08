@@ -121,9 +121,9 @@ impl BuiltinCompleter {
 	}
 
 	// Method to get files in the current directory that start with the given partial string
-	fn get_current_directory_files(&self, partial: &str) -> Vec<String> {
-		// Vector to store matching file names
-		let mut files: Vec<String> = Vec::new();
+	fn get_current_directory_files(&self, partial: &str) -> Vec<(String, bool)> {
+		// Vector to store matching file names with directory status
+		let mut files: Vec<(String, bool)> = Vec::new();
 
 		// Get the current working directory
 		let current_dir = match env::current_dir() {
@@ -142,23 +142,25 @@ impl BuiltinCompleter {
 					if name.starts_with(partial) &&
 						(!name.starts_with('.') || partial.starts_with('.'))
 					{
-						files.push(name.to_string());
+						// Check if this entry is a directory
+						let is_dir = entry.path().is_dir();
+						files.push((name.to_string(), is_dir));
 					}
 				}
 			}
 		}
 
 		// Sort for consistent ordering (alphabetically)
-		files.sort();
+		files.sort_by(|a, b| a.0.cmp(&b.0));
 
-		// Return the sorted list of files
+		// Return the sorted list of files with directory status
 		files
 	}
 
 	// Method to get files in a nested path that start with the given prefix
-	fn get_nested_path_files(&self, partial: &str) -> Vec<String> {
-		// Vector to store matching file names
-		let mut files: Vec<String> = Vec::new();
+	fn get_nested_path_files(&self, partial: &str) -> Vec<(String, bool)> {
+		// Vector to store matching file names with directory status
+		let mut files: Vec<(String, bool)> = Vec::new();
 
 		// Get the current working directory
 		let current_dir = match env::current_dir() {
@@ -187,8 +189,10 @@ impl BuiltinCompleter {
 						if name.starts_with(prefix) &&
 							(!name.starts_with('.') || prefix.starts_with('.'))
 						{
+							// Check if this entry is a directory
+							let is_dir = entry.path().is_dir();
 							// Return the full path (directory path + file name)
-							files.push(format!("{}{}", dir_path, name));
+							files.push((format!("{}{}", dir_path, name), is_dir));
 						}
 					}
 				}
@@ -196,9 +200,9 @@ impl BuiltinCompleter {
 		}
 
 		// Sort for consistent ordering (alphabetically)
-		files.sort();
+		files.sort_by(|a, b| a.0.cmp(&b.0));
 
-		// Return the sorted list of files with full paths
+		// Return the sorted list of files with directory status
 		files
 	}
 }
@@ -275,12 +279,14 @@ impl Completer for BuiltinCompleter {
 			} else {
 				self.get_current_directory_files(partial)
 			};
-			for file_name in &files {
+			for (file_name, is_dir) in &files {
 				if seen_names.insert(file_name.clone()) {
-					// Display version with a space after (so user can continue typing)
-					let display = format!("{} ", file_name);
+					// Use trailing slash for directories, space for files
+					let trailing = if *is_dir { "/" } else { " " };
+					// Display version with trailing character
+					let display = format!("{}{}", file_name, trailing);
 					// Replacement string (what gets inserted)
-					let replacement = format!("{} ", file_name);
+					let replacement = format!("{}{}", file_name, trailing);
 					// Add the completion candidate
 					matches.push(Pair { display, replacement });
 				}
