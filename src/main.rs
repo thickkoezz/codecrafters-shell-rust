@@ -263,15 +263,37 @@ impl Completer for BuiltinCompleter {
 		// Get the partial word being completed
 		let partial = &line_start[word_start..];
 
-		// Check if we're completing an argument (there's a space before the word)
-		let is_argument_completion = word_start > 0 && line_start[..word_start].contains(' ');
+		// Determine if we are completing a command or an argument
+		// by checking the line structure and first word
+		let is_command_completion = if line_start.contains(' ') {
+			// There are multiple parts - check if first word is a command
+			let tokens: Vec<&str> = line_start.split_whitespace().collect();
+			if tokens.len() > 1 {
+				// Check if first token is a valid command (builtin or in PATH)
+				let is_first_token_command = self.builtin_commands.contains(&tokens[0]) ||
+					!self.get_path_executables(&tokens[0]).is_empty();
+				if is_first_token_command {
+					// First word is a command, so we are completing an argument
+					false
+				} else {
+					// First word is not a known command
+					true
+				}
+			} else {
+				// Single token - completing a command
+				true
+			}
+		} else {
+			// No space - completing a command
+			true
+		};
 
 		// Vector to store all completion matches
 		let mut matches: Vec<Pair> = Vec::new();
 		// HashSet to track seen names and avoid duplicates
 		let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-		if is_argument_completion {
+		if !is_command_completion {
 			// Completing an argument - search for files
 			// Use nested path completion if partial contains a '/', otherwise use current directory
 			let files = if partial.contains('/') {
