@@ -119,6 +119,41 @@ impl BuiltinCompleter {
 		// Return the sorted list of executables
 		executables
 	}
+
+	// Method to get files in the current directory that start with the given partial string
+	fn get_current_directory_files(&self, partial: &str) -> Vec<String> {
+		// Vector to store matching file names
+		let mut files: Vec<String> = Vec::new();
+
+		// Get the current working directory
+		let current_dir = match env::current_dir() {
+			Ok(dir) => dir,
+			Err(_) => return files,
+		};
+
+		// Read directory entries
+		if let Ok(entries) = fs::read_dir(&current_dir) {
+			// Iterate through each entry in the directory
+			for entry in entries.flatten() {
+				// Get the file name from the entry
+				if let Some(name) = entry.file_name().to_str() {
+					// Only add if it starts with the partial string
+					// Skip hidden files (starting with '.') unless partial also starts with '.'
+					if name.starts_with(partial) &&
+						(!name.starts_with('.') || partial.starts_with('.'))
+					{
+						files.push(name.to_string());
+					}
+				}
+			}
+		}
+
+		// Sort for consistent ordering (alphabetically)
+		files.sort();
+
+		// Return the sorted list of files
+		files
+	}
 }
 
 // Implement the Helper trait for BuiltinCompleter (empty implementation required by rustyline)
@@ -177,40 +212,59 @@ impl Completer for BuiltinCompleter {
 		// Get the partial word being completed
 		let partial = &line_start[word_start..];
 
+		// Check if we're completing an argument (there's a space before the word)
+		let is_argument_completion = word_start > 0 && line_start[..word_start].contains(' ');
+
 		// Vector to store all completion matches
 		let mut matches: Vec<Pair> = Vec::new();
 		// HashSet to track seen names and avoid duplicates
 		let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-		// Find matching builtin commands
-		for cmd in &self.builtin_commands {
-			// Check if the builtin command starts with the partial input
-			if cmd.starts_with(partial) {
-				// Try to insert the command name into the seen set (returns false if already
-				// present)
-				if seen_names.insert(cmd.to_string()) {
+		if is_argument_completion {
+			// Completing an argument - search for files in current directory
+			let files = self.get_current_directory_files(partial);
+			for file_name in &files {
+				if seen_names.insert(file_name.clone()) {
 					// Display version with a space after (so user can continue typing)
-					let display = format!("{} ", cmd);
+					let display = format!("{} ", file_name);
 					// Replacement string (what gets inserted)
-					let replacement = format!("{} ", cmd);
+					let replacement = format!("{} ", file_name);
 					// Add the completion candidate
 					matches.push(Pair { display, replacement });
 				}
 			}
-		}
+		} else {
+			// Completing a command - search for builtin commands and PATH executables
+			// Find matching builtin commands
+			for cmd in &self.builtin_commands {
+				// Check if the builtin command starts with the partial input
+				if cmd.starts_with(partial) {
+					// Try to insert the command name into the seen set (returns false if already
+					// present)
+					if seen_names.insert(cmd.to_string()) {
+						// Display version with a space after (so user can continue typing)
+						let display = format!("{} ", cmd);
+						// Replacement string (what gets inserted)
+						let replacement = format!("{} ", cmd);
+						// Add the completion candidate
+						matches.push(Pair { display, replacement });
+					}
+				}
+			}
 
-		// Find matching executables in PATH
-		let path_executables = self.get_path_executables(partial);
-		for exe_name in &path_executables {
-			// Try to insert the executable name into the seen set (returns false if already
-			// present)
-			if seen_names.insert(exe_name.clone()) {
-				// Display version with a space after (so user can continue typing)
-				let display = format!("{} ", exe_name);
-				// Replacement string (what gets inserted)
-				let replacement = format!("{} ", exe_name);
-				// Add the completion candidate
-				matches.push(Pair { display, replacement });
+			// Find matching executables in PATH
+			let path_executables = self.get_path_executables(partial);
+			for exe_name in &path_executables {
+				// Try to insert the executable name into the seen set (returns false if already
+				// present)
+				if seen_names.insert(exe_name.clone()) {
+					// Display version with a space after (so user can continue typing)
+					let display = format!("{} ", exe_name);
+					// Replacement string (what gets inserted)
+					let replacement = format!("{} ", exe_name);
+					// Add the completion candidate
+					matches.push(Pair { display, replacement });
+				}
 			}
 		}
 
