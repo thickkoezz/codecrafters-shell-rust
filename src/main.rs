@@ -154,6 +154,53 @@ impl BuiltinCompleter {
 		// Return the sorted list of files
 		files
 	}
+
+	// Method to get files in a nested path that start with the given prefix
+	fn get_nested_path_files(&self, partial: &str) -> Vec<String> {
+		// Vector to store matching file names
+		let mut files: Vec<String> = Vec::new();
+
+		// Get the current working directory
+		let current_dir = match env::current_dir() {
+			Ok(dir) => dir,
+			Err(_) => return files,
+		};
+
+		// Find the last '/' to split directory path from prefix
+		if let Some(last_slash_pos) = partial.rfind('/') {
+			// Directory path includes everything up to and including the last '/'
+			let dir_path = &partial[..last_slash_pos + 1];
+			// Prefix is everything after the last '/'
+			let prefix = &partial[last_slash_pos + 1..];
+
+			// Build the full path to search
+			let search_path = current_dir.join(dir_path);
+
+			// Read directory entries from the nested path
+			if let Ok(entries) = fs::read_dir(&search_path) {
+				// Iterate through each entry in the directory
+				for entry in entries.flatten() {
+					// Get the file name from the entry
+					if let Some(name) = entry.file_name().to_str() {
+						// Only add if it starts with the prefix
+						// Skip hidden files (starting with '.') unless prefix also starts with '.'
+						if name.starts_with(prefix) &&
+							(!name.starts_with('.') || prefix.starts_with('.'))
+						{
+							// Return the full path (directory path + file name)
+							files.push(format!("{}{}", dir_path, name));
+						}
+					}
+				}
+			}
+		}
+
+		// Sort for consistent ordering (alphabetically)
+		files.sort();
+
+		// Return the sorted list of files with full paths
+		files
+	}
 }
 
 // Implement the Helper trait for BuiltinCompleter (empty implementation required by rustyline)
@@ -221,8 +268,13 @@ impl Completer for BuiltinCompleter {
 		let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
 		if is_argument_completion {
-			// Completing an argument - search for files in current directory
-			let files = self.get_current_directory_files(partial);
+			// Completing an argument - search for files
+			// Use nested path completion if partial contains a '/', otherwise use current directory
+			let files = if partial.contains('/') {
+				self.get_nested_path_files(partial)
+			} else {
+				self.get_current_directory_files(partial)
+			};
 			for file_name in &files {
 				if seen_names.insert(file_name.clone()) {
 					// Display version with a space after (so user can continue typing)
