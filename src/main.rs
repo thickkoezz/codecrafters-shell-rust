@@ -280,8 +280,14 @@ impl Completer for BuiltinCompleter {
 					true
 				}
 			} else {
-				// Single token - completing a command
-				true
+				// Single token - check if line ends with space
+				if line_start.ends_with(' ') {
+					// Line ends with space - completing an argument
+					false
+				} else {
+					// Still typing the command
+					true
+				}
 			}
 		} else {
 			// No space - completing a command
