@@ -176,7 +176,12 @@ impl BuiltinCompleter {
 			let prefix = &partial[last_slash_pos + 1..];
 
 			// Build the full path to search
-			let search_path = current_dir.join(dir_path);
+			// Remove trailing slash from dir_path for reliable path joining
+			let search_path = if dir_path.ends_with('/') && dir_path != "/" {
+				current_dir.join(&dir_path[..dir_path.len() - 1])
+			} else {
+				current_dir.join(dir_path)
+			};
 
 			// Read directory entries from the nested path
 			if let Ok(entries) = fs::read_dir(&search_path) {
