@@ -12,20 +12,14 @@ use std::{borrow::Cow, cell::RefCell, env, fs, io::Write, path::Path};
 pub struct BuiltinCompleter {
 	// List of builtin command names for completion
 	builtin_commands: Vec<&'static str>,
-	// Track the last partial input to detect repeated tab presses
-	last_partial: RefCell<String>,
-	// Track tab press count for the current partial
-	tab_count: RefCell<usize>,
 }
 
 impl BuiltinCompleter {
 	// Constructor method to create a new BuiltinCompleter instance
 	pub fn new() -> Self {
-		// Initialize with the list of builtin commands and state tracking
+		// Initialize with the list of builtin commands
 		Self {
 			builtin_commands: vec!["echo", "exit", "type", "pwd", "cd"],
-			last_partial: RefCell::new(String::new()),
-			tab_count: RefCell::new(0),
 		}
 	}
 
@@ -310,27 +304,16 @@ impl rustyline::completion::Completer for BuiltinCompleter {
 
 		matches.sort_by(|a, b| a.display.cmp(&b.display));
 
-		let mut last_partial = self.last_partial.borrow_mut();
-		let mut tab_count = self.tab_count.borrow_mut();
-
-		if *last_partial == partial.to_string() {
-			*tab_count += 1;
-		} else {
-			*last_partial = partial.to_string();
-			*tab_count = 1;
-		}
-
+		// Simplified logic: no state tracking for repeat TABs
 		if matches.is_empty() {
-			*tab_count = 0;
 			return Ok((word_start, Vec::new()));
 		}
 
 		if matches.len() == 1 {
-			*tab_count = 0;
 			return Ok((word_start, matches));
 		}
 
-		// Multiple matches
+		// Multiple matches - calculate least common prefix and show matches on second TAB
 		let match_names: Vec<&str> = matches.iter().map(|p| p.display.trim()).collect();
 
 		let lcp = match_names.iter().skip(1).fold(match_names[0].to_string(), |acc, name| {
@@ -345,31 +328,27 @@ impl rustyline::completion::Completer for BuiltinCompleter {
 			common
 		});
 
-		if lcp != *partial {
-			*tab_count = 0;
+		if lcp != *partial && !lcp.is_empty() {
+			// Return LCP for completion
 			let display = lcp.clone();
 			let replacement = lcp.clone();
 			return Ok((word_start, vec![Pair { display, replacement }]));
 		}
 
-		if *tab_count == 1 {
-			Ok((word_start, Vec::new()))
-		} else {
-			let current_line = line;
-			let current_pos = pos;
+		// Show all matches
+		let current_line = line;
+		let current_pos = pos;
 
-			print!("\x07");
-			print!("\r\n{}\r\n", match_names.join("  "));
-			print!("$ {}", current_line);
+		print!("\x07");
+		print!("\r\n{}\r\n", match_names.join("  "));
+		print!("$ {}", current_line);
 
-			let chars_from_end = current_line.len().saturating_sub(current_pos);
-			if chars_from_end > 0 {
-				print!("\x1b[{}D", chars_from_end);
-			}
-			std::io::stdout().flush().ok();
-
-			*tab_count = 0;
-			Ok((word_start, Vec::new()))
+		let chars_from_end = current_line.len().saturating_sub(current_pos);
+		if chars_from_end > 0 {
+			print!("\x1b[{}D", chars_from_end);
 		}
+		std::io::stdout().flush().ok();
+
+		Ok((word_start, Vec::new()))
 	}
 }
