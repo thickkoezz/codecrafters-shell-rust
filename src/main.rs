@@ -231,51 +231,73 @@ impl Completer for BuiltinCompleter {
 			*tab_count = 1;
 		}
 
-		// Traditional shell completion behavior:
-		// - If there are multiple matches:
-		//   - First TAB: ring the bell (return empty matches)
-		//   - Second TAB: print all matches
-		// - If there's exactly one match: complete immediately
-		if matches.len() > 1 {
-			// Multiple matches - use tab count to determine behavior
-			if *tab_count == 1 {
-				// First tab press - ring the bell by returning empty matches
-				Ok((word_start, Vec::new()))
-			} else {
-				// Second (or later) tab press - display all matches
-				// Print all matches on a new line, separated by two spaces
-				let match_names: Vec<&str> = matches.iter().map(|p| p.display.trim()).collect();
+		// Handle no matches
+		if matches.is_empty() {
+			*tab_count = 0;
+			return Ok((word_start, Vec::new()));
+		}
 
-				// Store the current line and position for restoration
-				let current_line = line;
-				let current_pos = pos;
+		// Handle single match - complete with trailing space
+		if matches.len() == 1 {
+			*tab_count = 0;
+			return Ok((word_start, matches));
+		}
 
-				// Ring the bell and print matches using terminal control codes
-				print!("\x07"); // Ring the bell
-				print!("\r\n{}\r\n", match_names.join("  ")); // Print matches on new line
+		// Multiple matches: use longest common prefix (LCP) completion
+		let match_names: Vec<&str> = matches.iter().map(|p| p.display.trim()).collect();
 
-				// Manually restore the prompt and input using ANSI escape codes
-				print!("$ {}", current_line); // Print prompt and original input
-
-				// Move cursor back to original position
-				let chars_from_end = current_line.len().saturating_sub(current_pos);
-				if chars_from_end > 0 {
-					// Use ANSI escape code to move cursor left
-					print!("\x1b[{}D", chars_from_end);
+		// Find the longest common prefix of all matches
+		let lcp = match_names.iter().skip(1).fold(match_names[0].to_string(), |acc, name| {
+			let mut common = String::new();
+			for (a, b) in acc.chars().zip(name.chars()) {
+				if a == b {
+					common.push(a);
+				} else {
+					break;
 				}
-				// Flush stdout to ensure output is displayed immediately
-				std::io::stdout().flush().ok();
-
-				// Reset tab count for next completion
-				*tab_count = 0;
-				// Return empty matches to prevent auto-completion
-				Ok((word_start, Vec::new()))
 			}
+			common
+		});
+
+		// If LCP is different from the partial, complete to LCP
+		if lcp != *partial {
+			*tab_count = 0;
+			// Complete to LCP without trailing space (since there are multiple matches)
+			let display = lcp.clone();
+			let replacement = lcp.clone();
+			return Ok((word_start, vec![Pair { display, replacement }]));
+		}
+
+		// LCP equals partial - traditional shell completion behavior
+		if *tab_count == 1 {
+			// First tab press - ring the bell by returning empty matches
+			Ok((word_start, Vec::new()))
 		} else {
-			// Zero or one matches - return as-is for normal completion
+			// Second (or later) tab press - display all matches
+			// Store the current line and position for restoration
+			let current_line = line;
+			let current_pos = pos;
+
+			// Ring the bell and print matches using terminal control codes
+			print!("\x07"); // Ring the bell
+			print!("\r\n{}\r\n", match_names.join("  ")); // Print matches on new line
+
+			// Manually restore the prompt and input using ANSI escape codes
+			print!("$ {}", current_line); // Print prompt and original input
+
+			// Move cursor back to original position
+			let chars_from_end = current_line.len().saturating_sub(current_pos);
+			if chars_from_end > 0 {
+				// Use ANSI escape code to move cursor left
+				print!("\x1b[{}D", chars_from_end);
+			}
+			// Flush stdout to ensure output is displayed immediately
+			std::io::stdout().flush().ok();
+
 			// Reset tab count for next completion
 			*tab_count = 0;
-			Ok((word_start, matches))
+			// Return empty matches to prevent auto-completion
+			Ok((word_start, Vec::new()))
 		}
 	}
 }
